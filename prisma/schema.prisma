@@ -1,0 +1,1249 @@
+// JULIE — PostgreSQL schema (Prisma)
+// STATUS: written but NOT yet validated with `prisma validate` / migrated (no package registry access in the authoring sandbox).
+// First step on your machine: `npx prisma validate && npx prisma migrate dev --name init`
+//
+// Conventions: snake_case tables via @@map, cuid string ids, timestamptz via DateTime, soft delete only where noted.
+// Authorization lives in the backend; nothing here is trusted from the client.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────── ENUMS ─────────────────────────
+
+enum AccountStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+enum PublishStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  COMPLETED
+  DROPPED
+}
+
+enum ResourceType {
+  LINK
+  FILE
+  VIDEO_EMBED
+  DOCUMENT
+}
+
+enum FileStatus {
+  PENDING
+  READY
+  QUARANTINED
+  DELETED
+}
+
+enum FileVisibility {
+  PRIVATE
+  COURSE
+  PUBLIC
+}
+
+enum QuestionType {
+  SINGLE_CHOICE
+  MULTIPLE_CHOICE
+  TRUE_FALSE
+  SHORT_ANSWER
+}
+
+enum AttemptStatus {
+  IN_PROGRESS
+  SUBMITTED
+  GRADED
+  EXPIRED
+}
+
+enum ProgressStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum XpSource {
+  LESSON_COMPLETED
+  QUIZ_PASSED
+  STREAK_BONUS
+  BADGE_AWARDED
+  ACHIEVEMENT
+  GOAL_COMPLETED
+  ADMIN_ADJUSTMENT
+}
+
+enum GoalStatus {
+  ACTIVE
+  COMPLETED
+  ABANDONED
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+  CANCELLED
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+enum ConversationStatus {
+  ACTIVE
+  ARCHIVED
+  DELETED
+}
+
+enum FeedbackRating {
+  HELPFUL
+  NOT_HELPFUL
+}
+
+enum AnnouncementAudience {
+  ALL
+  STUDENTS
+  TEACHERS
+  COURSE
+}
+
+enum BillingInterval {
+  NONE
+  DAY
+  WEEK
+  MONTH
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  EXPIRED
+}
+
+enum PeriodStatus {
+  OPEN
+  PAID
+  VOID
+}
+
+enum GrantType {
+  TIMED
+  UNLIMITED
+}
+
+enum NotificationCategory {
+  SYSTEM
+  ANNOUNCEMENT
+  COURSE
+  QUIZ
+  GOAL
+  SUBSCRIPTION
+  SECURITY
+  AI
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+}
+
+enum SecuritySeverity {
+  INFO
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum AppStatus {
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+enum ApiKeyStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+// ───────────────────────── IDENTITY ─────────────────────────
+
+model User {
+  id            String        @id @default(cuid())
+  firebaseUid   String        @unique @map("firebase_uid")
+  email         String        @unique
+  emailVerified Boolean       @default(false) @map("email_verified")
+  status        AccountStatus @default(ACTIVE)
+  lastLoginAt   DateTime?     @map("last_login_at")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+  deletedAt     DateTime?     @map("deleted_at")
+
+  profile                Profile?
+  userRoles              UserRole[]               @relation("RoleHolder")
+  rolesGranted           UserRole[]               @relation("RoleGrantedBy")
+  coursesCreated         Course[]                 @relation("CourseCreator")
+  courseTeaching         CourseTeacher[]
+  sectionsTaught         CourseSection[]
+  enrollments            Enrollment[]             @relation("Enrollee")
+  enrollmentsCreated     Enrollment[]             @relation("EnrolledBy")
+  lessonsCreated         Lesson[]
+  resourcesCreated       Resource[]
+  filesUploaded          FileAsset[]
+  quizzesCreated         Quiz[]
+  quizAttempts           QuizAttempt[]
+  lessonProgress         LessonProgress[]
+  courseProgress         CourseProgress[]
+  xpEvents               XpEvent[]
+  userBadges             UserBadge[]
+  userAchievements       UserAchievement[]
+  streak                 Streak?
+  goals                  Goal[]
+  tasks                  Task[]
+  timetables             Timetable[]
+  aiConversations        AiConversation[]
+  aiUsage                AiUsage[]
+  aiFeedback             AiFeedback[]
+  newsAuthored           NewsArticle[]
+  announcementsAuthored  Announcement[]
+  subscriptions          Subscription[]
+  payments               Payment[]
+  accessGrants           AccessGrant[]            @relation("GrantHolder")
+  accessGrantsGiven      AccessGrant[]            @relation("GrantedBy")
+  accessGrantsRevoked    AccessGrant[]            @relation("RevokedBy")
+  notifications          Notification[]
+  notificationPrefs      NotificationPreference[]
+  auditLogs              AuditLog[]
+  securityEvents         SecurityEvent[]
+  settingsUpdated        SystemSetting[]
+  developerApps          DeveloperApplication[]
+  featureFlagsUpdated    FeatureFlag[]
+  userEvents             UserEvent[]
+
+  @@index([status])
+  @@map("users")
+}
+
+model Profile {
+  id          String   @id @default(cuid())
+  userId      String   @unique @map("user_id")
+  displayName String   @map("display_name")
+  firstName   String?  @map("first_name")
+  lastName    String?  @map("last_name")
+  bio         String?
+  gradeLevel  String?  @map("grade_level")
+  institution String?
+  timezone    String   @default("UTC")
+  locale      String   @default("en")
+  avatarUrl   String?  @map("avatar_url")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("profiles")
+}
+
+model Role {
+  id          String  @id @default(cuid())
+  key         String  @unique // STUDENT | TEACHER | ADMIN | DEVELOPER
+  name        String
+  description String?
+  isSystem    Boolean @default(true) @map("is_system")
+
+  permissions RolePermission[]
+  userRoles   UserRole[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String  @id @default(cuid())
+  key         String  @unique // e.g. "course:manage", "user:read_any"
+  description String?
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String @map("role_id")
+  permissionId String @map("permission_id")
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  id          String    @id @default(cuid())
+  userId      String    @map("user_id")
+  roleId      String    @map("role_id")
+  grantedById String?   @map("granted_by_id")
+  reason      String?
+  grantedAt   DateTime  @default(now()) @map("granted_at")
+  revokedAt   DateTime? @map("revoked_at")
+
+  user      User  @relation("RoleHolder", fields: [userId], references: [id], onDelete: Cascade)
+  role      Role  @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  grantedBy User? @relation("RoleGrantedBy", fields: [grantedById], references: [id], onDelete: SetNull)
+
+  @@unique([userId, roleId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+// ───────────────────────── ACADEMIC STRUCTURE ─────────────────────────
+
+model AcademicYear {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  startsOn  DateTime @map("starts_on") @db.Date
+  endsOn    DateTime @map("ends_on") @db.Date
+  isCurrent Boolean  @default(false) @map("is_current")
+
+  terms Term[]
+
+  @@map("academic_years")
+}
+
+model Term {
+  id             String   @id @default(cuid())
+  academicYearId String   @map("academic_year_id")
+  name           String
+  startsOn       DateTime @map("starts_on") @db.Date
+  endsOn         DateTime @map("ends_on") @db.Date
+
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  courses      Course[]
+  sections     CourseSection[]
+  timetables   Timetable[]
+
+  @@unique([academicYearId, name])
+  @@map("terms")
+}
+
+model Subject {
+  id          String  @id @default(cuid())
+  slug        String  @unique
+  name        String
+  description String?
+  iconKey     String? @map("icon_key")
+  isActive    Boolean @default(true) @map("is_active")
+
+  courses Course[]
+
+  @@map("subjects")
+}
+
+model Course {
+  id          String        @id @default(cuid())
+  subjectId   String        @map("subject_id")
+  termId      String?       @map("term_id")
+  createdById String?       @map("created_by_id")
+  slug        String        @unique
+  title       String
+  description String?
+  level       String?
+  status      PublishStatus @default(DRAFT)
+  isPremium   Boolean       @default(false) @map("is_premium") // gated behind an effective paid plan
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  subject     Subject         @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+  term        Term?           @relation(fields: [termId], references: [id], onDelete: SetNull)
+  createdBy   User?           @relation("CourseCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  teachers    CourseTeacher[]
+  sections    CourseSection[]
+  lessons     Lesson[]
+  resources   Resource[]
+  enrollments Enrollment[]
+  quizzes     Quiz[]
+  progress    CourseProgress[]
+  announcements Announcement[]
+  aiConversations AiConversation[]
+  timetableEntries TimetableEntry[]
+
+  @@index([subjectId])
+  @@index([status])
+  @@map("courses")
+}
+
+// Teacher <-> course authorization (ownership checks use this table).
+model CourseTeacher {
+  courseId  String   @map("course_id")
+  userId    String   @map("user_id")
+  isOwner   Boolean  @default(false) @map("is_owner")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([courseId, userId])
+  @@index([userId])
+  @@map("course_teachers")
+}
+
+// A class group/cohort of a course (e.g. "Period 3"). Lessons belong to the course, not the section.
+model CourseSection {
+  id        String  @id @default(cuid())
+  courseId  String  @map("course_id")
+  termId    String? @map("term_id")
+  teacherId String? @map("teacher_id")
+  code      String
+  capacity  Int?
+
+  course      Course       @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  term        Term?        @relation(fields: [termId], references: [id], onDelete: SetNull)
+  teacher     User?        @relation(fields: [teacherId], references: [id], onDelete: SetNull)
+  enrollments Enrollment[]
+
+  @@unique([courseId, code])
+  @@map("course_sections")
+}
+
+model Lesson {
+  id              String        @id @default(cuid())
+  courseId        String        @map("course_id")
+  createdById     String?       @map("created_by_id")
+  slug            String
+  title           String
+  summary         String?
+  content         String?       // markdown; sanitized on render
+  moduleTitle     String?       @map("module_title")
+  position        Int           @default(0)
+  durationMinutes Int?          @map("duration_minutes")
+  xpReward        Int           @default(10) @map("xp_reward")
+  isPreview       Boolean       @default(false) @map("is_preview") // accessible without paid access
+  status          PublishStatus @default(DRAFT)
+  publishedAt     DateTime?     @map("published_at")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  course     Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  createdBy  User?            @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  resources  Resource[]
+  quizzes    Quiz[]
+  progress   LessonProgress[]
+  aiConversations AiConversation[]
+
+  @@unique([courseId, slug])
+  @@index([courseId, position])
+  @@map("lessons")
+}
+
+model FileAsset {
+  id           String         @id @default(cuid())
+  uploadedById String?        @map("uploaded_by_id")
+  storageKey   String         @unique @map("storage_key")
+  originalName String         @map("original_name")
+  mimeType     String         @map("mime_type")
+  sizeBytes    Int            @map("size_bytes")
+  sha256       String?
+  status       FileStatus     @default(PENDING)
+  visibility   FileVisibility @default(PRIVATE)
+  createdAt    DateTime       @default(now()) @map("created_at")
+  deletedAt    DateTime?      @map("deleted_at")
+
+  uploadedBy User?      @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+  resources  Resource[]
+
+  @@map("file_assets")
+}
+
+model Resource {
+  id          String       @id @default(cuid())
+  courseId    String       @map("course_id")
+  lessonId    String?      @map("lesson_id")
+  fileAssetId String?      @map("file_asset_id")
+  createdById String?      @map("created_by_id")
+  type        ResourceType
+  title       String
+  description String?
+  url         String?
+  position    Int          @default(0)
+  createdAt   DateTime     @default(now()) @map("created_at")
+
+  course    Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  lesson    Lesson?    @relation(fields: [lessonId], references: [id], onDelete: SetNull)
+  fileAsset FileAsset? @relation(fields: [fileAssetId], references: [id], onDelete: SetNull)
+  createdBy User?      @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([courseId])
+  @@map("resources")
+}
+
+// ───────────────────────── ENROLLMENT ─────────────────────────
+
+model Enrollment {
+  id           String           @id @default(cuid())
+  userId       String           @map("user_id")
+  courseId     String           @map("course_id")
+  sectionId    String?          @map("section_id")
+  enrolledById String?          @map("enrolled_by_id")
+  status       EnrollmentStatus @default(ACTIVE)
+  enrolledAt   DateTime         @default(now()) @map("enrolled_at")
+  completedAt  DateTime?        @map("completed_at")
+
+  user       User           @relation("Enrollee", fields: [userId], references: [id], onDelete: Cascade)
+  course     Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  section    CourseSection? @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+  enrolledBy User?          @relation("EnrolledBy", fields: [enrolledById], references: [id], onDelete: SetNull)
+
+  @@unique([userId, courseId])
+  @@index([courseId])
+  @@map("enrollments")
+}
+
+// ───────────────────────── ASSESSMENT ─────────────────────────
+
+model Quiz {
+  id               String        @id @default(cuid())
+  courseId         String        @map("course_id")
+  lessonId         String?       @map("lesson_id")
+  createdById      String?       @map("created_by_id")
+  title            String
+  description      String?
+  timeLimitSeconds Int?          @map("time_limit_seconds")
+  maxAttempts      Int?          @map("max_attempts")
+  passingScorePct  Int           @default(60) @map("passing_score_pct")
+  shuffleQuestions Boolean       @default(false) @map("shuffle_questions")
+  xpReward         Int           @default(25) @map("xp_reward")
+  status           PublishStatus @default(DRAFT)
+  createdAt        DateTime      @default(now()) @map("created_at")
+  updatedAt        DateTime      @updatedAt @map("updated_at")
+
+  course    Course        @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  lesson    Lesson?       @relation(fields: [lessonId], references: [id], onDelete: SetNull)
+  createdBy User?         @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  questions Question[]
+  attempts  QuizAttempt[]
+
+  @@index([courseId])
+  @@map("quizzes")
+}
+
+model Question {
+  id          String       @id @default(cuid())
+  quizId      String       @map("quiz_id")
+  type        QuestionType
+  prompt      String
+  explanation String?
+  points      Int          @default(1)
+  position    Int          @default(0)
+
+  quiz    Quiz              @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  options AnswerOption[]
+  answers SubmittedAnswer[]
+
+  @@index([quizId, position])
+  @@map("questions")
+}
+
+model AnswerOption {
+  id         String  @id @default(cuid())
+  questionId String  @map("question_id")
+  text       String
+  isCorrect  Boolean @default(false) @map("is_correct") // NEVER serialize to students before submission
+  position   Int     @default(0)
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([questionId])
+  @@map("answer_options")
+}
+
+model QuizAttempt {
+  id            String        @id @default(cuid())
+  quizId        String        @map("quiz_id")
+  userId        String        @map("user_id")
+  attemptNumber Int           @map("attempt_number")
+  status        AttemptStatus @default(IN_PROGRESS)
+  startedAt     DateTime      @default(now()) @map("started_at")
+  submittedAt   DateTime?     @map("submitted_at")
+  score         Decimal?      @db.Decimal(8, 2)
+  maxScore      Decimal?      @map("max_score") @db.Decimal(8, 2)
+  percentage    Decimal?      @db.Decimal(5, 2)
+  passed        Boolean?
+
+  quiz    Quiz              @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  user    User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  answers SubmittedAnswer[]
+
+  @@unique([quizId, userId, attemptNumber])
+  @@index([userId])
+  @@map("quiz_attempts")
+}
+
+model SubmittedAnswer {
+  id                String   @id @default(cuid())
+  attemptId         String   @map("attempt_id")
+  questionId        String   @map("question_id")
+  selectedOptionIds String[] @map("selected_option_ids")
+  textAnswer        String?  @map("text_answer")
+  isCorrect         Boolean? @map("is_correct")
+  pointsAwarded     Decimal? @map("points_awarded") @db.Decimal(6, 2)
+
+  attempt  QuizAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  question Question    @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([attemptId, questionId])
+  @@map("submitted_answers")
+}
+
+// ───────────────────────── PROGRESS / GAMIFICATION ─────────────────────────
+
+model LessonProgress {
+  id               String         @id @default(cuid())
+  userId           String         @map("user_id")
+  lessonId         String         @map("lesson_id")
+  status           ProgressStatus @default(NOT_STARTED)
+  timeSpentSeconds Int            @default(0) @map("time_spent_seconds")
+  startedAt        DateTime?      @map("started_at")
+  completedAt      DateTime?      @map("completed_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lesson Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, lessonId])
+  @@map("lesson_progress")
+}
+
+model CourseProgress {
+  id               String    @id @default(cuid())
+  userId           String    @map("user_id")
+  courseId         String    @map("course_id")
+  completedLessons Int       @default(0) @map("completed_lessons")
+  totalLessons     Int       @default(0) @map("total_lessons")
+  percentComplete  Decimal   @default(0) @map("percent_complete") @db.Decimal(5, 2)
+  lastActivityAt   DateTime? @map("last_activity_at")
+  completedAt      DateTime? @map("completed_at")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, courseId])
+  @@map("course_progress")
+}
+
+model Level {
+  id     String @id @default(cuid())
+  number Int    @unique
+  title  String
+  minXp  Int    @unique @map("min_xp")
+
+  @@map("levels")
+}
+
+// XP is an append-only ledger; totals and levels are derived. idempotencyKey prevents double-awards.
+model XpEvent {
+  id             String   @id @default(cuid())
+  userId         String   @map("user_id")
+  amount         Int
+  source         XpSource
+  idempotencyKey String?  @unique @map("idempotency_key")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("xp_events")
+}
+
+model Badge {
+  id          String  @id @default(cuid())
+  key         String  @unique
+  name        String
+  description String?
+  iconKey     String? @map("icon_key")
+  criteria    Json?
+
+  users UserBadge[]
+
+  @@map("badges")
+}
+
+model UserBadge {
+  userId    String   @map("user_id")
+  badgeId   String   @map("badge_id")
+  awardedAt DateTime @default(now()) @map("awarded_at")
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badge Badge @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+
+  @@id([userId, badgeId])
+  @@map("user_badges")
+}
+
+model Achievement {
+  id          String  @id @default(cuid())
+  key         String  @unique
+  name        String
+  description String?
+  xpReward    Int     @default(0) @map("xp_reward")
+  target      Int     @default(1)
+  criteria    Json?
+
+  users UserAchievement[]
+
+  @@map("achievements")
+}
+
+model UserAchievement {
+  userId        String    @map("user_id")
+  achievementId String    @map("achievement_id")
+  progress      Int       @default(0)
+  unlockedAt    DateTime? @map("unlocked_at")
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievement Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+
+  @@id([userId, achievementId])
+  @@map("user_achievements")
+}
+
+model Streak {
+  userId           String    @id @map("user_id")
+  currentDays      Int       @default(0) @map("current_days")
+  longestDays      Int       @default(0) @map("longest_days")
+  lastActivityDate DateTime? @map("last_activity_date") @db.Date
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("streaks")
+}
+
+// ───────────────────────── GOALS / SCHEDULING ─────────────────────────
+
+model Goal {
+  id          String     @id @default(cuid())
+  userId      String     @map("user_id")
+  title       String
+  description String?
+  targetDate  DateTime?  @map("target_date") @db.Date
+  status      GoalStatus @default(ACTIVE)
+  completedAt DateTime?  @map("completed_at")
+  createdAt   DateTime   @default(now()) @map("created_at")
+
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tasks Task[]
+
+  @@index([userId, status])
+  @@map("goals")
+}
+
+model Task {
+  id          String     @id @default(cuid())
+  userId      String     @map("user_id")
+  goalId      String?    @map("goal_id")
+  title       String
+  notes       String?
+  dueAt       DateTime?  @map("due_at")
+  status      TaskStatus @default(TODO)
+  completedAt DateTime?  @map("completed_at")
+  createdAt   DateTime   @default(now()) @map("created_at")
+
+  user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goal Goal? @relation(fields: [goalId], references: [id], onDelete: SetNull)
+
+  @@index([userId, status])
+  @@map("tasks")
+}
+
+model Timetable {
+  id       String  @id @default(cuid())
+  userId   String  @map("user_id")
+  termId   String? @map("term_id")
+  name     String
+  isActive Boolean @default(true) @map("is_active")
+
+  user    User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  term    Term?            @relation(fields: [termId], references: [id], onDelete: SetNull)
+  entries TimetableEntry[]
+
+  @@map("timetables")
+}
+
+model TimetableEntry {
+  id          String  @id @default(cuid())
+  timetableId String  @map("timetable_id")
+  courseId    String? @map("course_id")
+  dayOfWeek   Int     @map("day_of_week") // 0=Sunday..6=Saturday (CHECK 0..6 in constraints.sql)
+  startMinute Int     @map("start_minute") // minutes after midnight
+  endMinute   Int     @map("end_minute")
+  title       String
+  location    String?
+  notes       String?
+
+  timetable Timetable @relation(fields: [timetableId], references: [id], onDelete: Cascade)
+  course    Course?   @relation(fields: [courseId], references: [id], onDelete: SetNull)
+
+  @@index([timetableId, dayOfWeek])
+  @@map("timetable_entries")
+}
+
+// ───────────────────────── JULIE AI ─────────────────────────
+
+model AiConversation {
+  id        String             @id @default(cuid())
+  userId    String             @map("user_id")
+  courseId  String?            @map("course_id")
+  lessonId  String?            @map("lesson_id")
+  title     String?
+  status    ConversationStatus @default(ACTIVE)
+  createdAt DateTime           @default(now()) @map("created_at")
+  updatedAt DateTime           @updatedAt @map("updated_at")
+
+  user     User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course   Course?     @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  lesson   Lesson?     @relation(fields: [lessonId], references: [id], onDelete: SetNull)
+  messages AiMessage[]
+
+  @@index([userId, updatedAt])
+  @@map("ai_conversations")
+}
+
+model AiMessage {
+  id             String      @id @default(cuid())
+  conversationId String      @map("conversation_id")
+  role           MessageRole
+  content        String
+  provider       String?
+  model          String?
+  tokensIn       Int?        @map("tokens_in")
+  tokensOut      Int?        @map("tokens_out")
+  createdAt      DateTime    @default(now()) @map("created_at")
+
+  conversation AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  feedback     AiFeedback[]
+
+  @@index([conversationId, createdAt])
+  @@map("ai_messages")
+}
+
+// One row per user per UTC day; used to enforce plan/grant-based limits.
+model AiUsage {
+  id           String   @id @default(cuid())
+  userId       String   @map("user_id")
+  day          DateTime @db.Date
+  requestCount Int      @default(0) @map("request_count")
+  tokensIn     Int      @default(0) @map("tokens_in")
+  tokensOut    Int      @default(0) @map("tokens_out")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, day])
+  @@map("ai_usage")
+}
+
+model AiFeedback {
+  id        String         @id @default(cuid())
+  messageId String         @map("message_id")
+  userId    String         @map("user_id")
+  rating    FeedbackRating
+  comment   String?
+  createdAt DateTime       @default(now()) @map("created_at")
+
+  message AiMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@map("ai_feedback")
+}
+
+// ───────────────────────── CONTENT ─────────────────────────
+
+model NewsCategory {
+  id   String @id @default(cuid())
+  slug String @unique
+  name String
+
+  articles NewsArticle[]
+
+  @@map("news_categories")
+}
+
+model NewsArticle {
+  id          String        @id @default(cuid())
+  categoryId  String?       @map("category_id")
+  authorId    String?       @map("author_id")
+  slug        String        @unique
+  title       String
+  summary     String?
+  body        String
+  status      PublishStatus @default(DRAFT)
+  publishedAt DateTime?     @map("published_at")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  category NewsCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  author   User?         @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([status, publishedAt])
+  @@map("news_articles")
+}
+
+model Announcement {
+  id          String               @id @default(cuid())
+  authorId    String?              @map("author_id")
+  courseId    String?              @map("course_id")
+  audience    AnnouncementAudience @default(ALL)
+  title       String
+  body        String
+  isPinned    Boolean              @default(false) @map("is_pinned")
+  publishesAt DateTime             @default(now()) @map("publishes_at")
+  expiresAt   DateTime?            @map("expires_at")
+  createdAt   DateTime             @default(now()) @map("created_at")
+
+  author User?   @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  course Course? @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@index([audience, publishesAt])
+  @@map("announcements")
+}
+
+// ───────────────────────── SUBSCRIPTIONS & ACCESS ─────────────────────────
+
+// Plans are data, not columns on users. code examples: FREE, TRIAL, DAILY, WEEKLY, MONTHLY.
+model SubscriptionPlan {
+  id                  String          @id @default(cuid())
+  code                String          @unique
+  name                String
+  description         String?
+  interval            BillingInterval @default(NONE)
+  intervalCount       Int             @default(1) @map("interval_count")
+  priceCents          Int             @default(0) @map("price_cents")
+  currency            String          @default("USD")
+  trialDays           Int?            @map("trial_days")
+  aiDailyMessageLimit Int?            @map("ai_daily_message_limit") // null = unlimited
+  grantsPremiumAccess Boolean         @default(false) @map("grants_premium_access")
+  features            Json?
+  isActive            Boolean         @default(true) @map("is_active")
+  sortOrder           Int             @default(0) @map("sort_order")
+
+  subscriptions Subscription[]
+  accessGrants  AccessGrant[]
+
+  @@map("subscription_plans")
+}
+
+model Subscription {
+  id                 String             @id @default(cuid())
+  userId             String             @map("user_id")
+  planId             String             @map("plan_id")
+  status             SubscriptionStatus
+  currentPeriodStart DateTime           @map("current_period_start")
+  currentPeriodEnd   DateTime?          @map("current_period_end")
+  trialEndsAt        DateTime?          @map("trial_ends_at")
+  cancelAtPeriodEnd  Boolean            @default(false) @map("cancel_at_period_end")
+  canceledAt         DateTime?          @map("canceled_at")
+  externalProvider   String?            @map("external_provider")
+  externalRef        String?            @unique @map("external_ref")
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
+
+  user    User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan    SubscriptionPlan     @relation(fields: [planId], references: [id], onDelete: Restrict)
+  periods  SubscriptionPeriod[]
+  payments Payment[]
+
+  @@index([userId, status])
+  @@map("subscriptions")
+}
+
+model SubscriptionPeriod {
+  id             String       @id @default(cuid())
+  subscriptionId String       @map("subscription_id")
+  periodStart    DateTime     @map("period_start")
+  periodEnd      DateTime     @map("period_end")
+  amountCents    Int          @default(0) @map("amount_cents")
+  status         PeriodStatus @default(OPEN)
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId])
+  @@map("subscription_periods")
+}
+
+// Payment records are financial history: Restrict on delete (users are soft-deleted). No card data is ever stored;
+// the provider holds it. Amounts are recorded from the provider's confirmed event, never from client input.
+model Payment {
+  id             String        @id @default(cuid())
+  userId         String        @map("user_id")
+  subscriptionId String?       @map("subscription_id")
+  amountCents    Int           @map("amount_cents")
+  currency       String        @default("USD")
+  status         PaymentStatus @default(PENDING)
+  provider       String
+  externalRef    String?       @unique @map("external_ref")
+  failureReason  String?       @map("failure_reason")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  paidAt         DateTime?     @map("paid_at")
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Restrict)
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@map("payments")
+}
+
+// Admin overrides, independent of billing. Effective access = max(active subscription, active grants), computed server-side.
+model AccessGrant {
+  id           String     @id @default(cuid())
+  userId       String     @map("user_id")
+  planId       String?    @map("plan_id") // plan-level access this grant confers; null = full premium
+  type         GrantType
+  startsAt     DateTime   @default(now()) @map("starts_at")
+  expiresAt    DateTime?  @map("expires_at") // required when type = TIMED (CHECK in constraints.sql)
+  reason       String
+  grantedById  String     @map("granted_by_id")
+  revokedAt    DateTime?  @map("revoked_at")
+  revokedById  String?    @map("revoked_by_id")
+  revokeReason String?    @map("revoke_reason")
+  createdAt    DateTime   @default(now()) @map("created_at")
+
+  user      User              @relation("GrantHolder", fields: [userId], references: [id], onDelete: Cascade)
+  plan      SubscriptionPlan? @relation(fields: [planId], references: [id], onDelete: SetNull)
+  grantedBy User              @relation("GrantedBy", fields: [grantedById], references: [id], onDelete: Restrict)
+  revokedBy User?             @relation("RevokedBy", fields: [revokedById], references: [id], onDelete: SetNull)
+
+  @@index([userId, revokedAt, expiresAt])
+  @@map("access_grants")
+}
+
+// ───────────────────────── NOTIFICATIONS ─────────────────────────
+
+model Notification {
+  id        String               @id @default(cuid())
+  userId    String               @map("user_id")
+  category  NotificationCategory
+  title     String
+  body      String?
+  data      Json?
+  readAt    DateTime?            @map("read_at")
+  createdAt DateTime             @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+  @@map("notifications")
+}
+
+model NotificationPreference {
+  id       String               @id @default(cuid())
+  userId   String               @map("user_id")
+  category NotificationCategory
+  channel  NotificationChannel
+  enabled  Boolean              @default(true)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, category, channel])
+  @@map("notification_preferences")
+}
+
+// ───────────────────────── ADMINISTRATION ─────────────────────────
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?  @map("actor_id")
+  action     String // e.g. "access_grant.create", "role.grant"
+  entityType String   @map("entity_type")
+  entityId   String?  @map("entity_id")
+  metadata   Json?
+  ipAddress  String?  @map("ip_address")
+  userAgent  String?  @map("user_agent")
+  requestId  String?  @map("request_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([actorId, createdAt])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
+model SecurityEvent {
+  id        String           @id @default(cuid())
+  userId    String?          @map("user_id")
+  type      String // e.g. "auth.failed", "rbac.denied", "rate_limit.exceeded"
+  severity  SecuritySeverity @default(INFO)
+  ipAddress String?          @map("ip_address")
+  userAgent String?          @map("user_agent")
+  metadata  Json?
+  createdAt DateTime         @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([type, createdAt])
+  @@map("security_events")
+}
+
+model SystemSetting {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       Json
+  isPublic    Boolean  @default(false) @map("is_public")
+  updatedById String?  @map("updated_by_id")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  updatedBy User? @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@map("system_settings")
+}
+
+// ───────────────────────── DEVELOPER PLATFORM ─────────────────────────
+
+model DeveloperApplication {
+  id          String    @id @default(cuid())
+  ownerId     String    @map("owner_id")
+  name        String
+  description String?
+  status      AppStatus @default(ACTIVE)
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  owner    User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  apiKeys  ApiKey[]
+  webhooks Webhook[]
+
+  @@index([ownerId])
+  @@map("developer_applications")
+}
+
+// Only a hash of the key is stored. The plaintext is shown once at creation/rotation.
+model ApiKey {
+  id            String       @id @default(cuid())
+  applicationId String       @map("application_id")
+  name          String
+  prefix        String       @unique // non-secret display prefix used for lookup
+  keyHash       String       @unique @map("key_hash")
+  scopes        String[]
+  status        ApiKeyStatus @default(ACTIVE)
+  rotatedFromId String?      @unique @map("rotated_from_id")
+  expiresAt     DateTime?    @map("expires_at")
+  lastUsedAt    DateTime?    @map("last_used_at")
+  revokedAt     DateTime?    @map("revoked_at")
+  createdAt     DateTime     @default(now()) @map("created_at")
+
+  application DeveloperApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  rotatedFrom ApiKey?              @relation("KeyRotation", fields: [rotatedFromId], references: [id], onDelete: SetNull)
+  rotatedTo   ApiKey?              @relation("KeyRotation")
+  usage       ApiUsage[]
+
+  @@index([applicationId])
+  @@map("api_keys")
+}
+
+model ApiUsage {
+  id           String   @id @default(cuid())
+  apiKeyId     String   @map("api_key_id")
+  day          DateTime @db.Date
+  requestCount Int      @default(0) @map("request_count")
+  errorCount   Int      @default(0) @map("error_count")
+
+  apiKey ApiKey @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+
+  @@unique([apiKeyId, day])
+  @@map("api_usage")
+}
+
+model Webhook {
+  id              String    @id @default(cuid())
+  applicationId   String    @map("application_id")
+  url             String
+  events          String[]
+  secretEncrypted String    @map("secret_encrypted") // AES-GCM ciphertext; key from env, never in DB
+  isActive        Boolean   @default(true) @map("is_active")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  application DeveloperApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  deliveries  WebhookDelivery[]
+
+  @@map("webhooks")
+}
+
+model WebhookDelivery {
+  id         String   @id @default(cuid())
+  webhookId  String   @map("webhook_id")
+  event      String
+  statusCode Int?     @map("status_code")
+  success    Boolean  @default(false)
+  attempt    Int      @default(1)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  @@index([webhookId, createdAt])
+  @@map("webhook_deliveries")
+}
+
+model FeatureFlag {
+  id             String   @id @default(cuid())
+  key            String   @unique
+  description    String?
+  enabled        Boolean  @default(false)
+  rolloutPercent Int      @default(0) @map("rollout_percent")
+  rules          Json?
+  updatedById    String?  @map("updated_by_id")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  updatedBy User? @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@map("feature_flags")
+}
+
+// ───────────────────────── ANALYTICS ─────────────────────────
+
+model UserEvent {
+  id         String   @id @default(cuid())
+  userId     String?  @map("user_id")
+  name       String
+  properties Json?
+  sessionId  String?  @map("session_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([name, createdAt])
+  @@map("user_events")
+}
+
+model PlatformMetric {
+  id         String   @id @default(cuid())
+  name       String
+  value      Decimal  @db.Decimal(18, 4)
+  dimensions Json?
+  recordedAt DateTime @default(now()) @map("recorded_at")
+
+  @@index([name, recordedAt])
+  @@map("platform_metrics")
+}
